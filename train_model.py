@@ -1,90 +1,117 @@
-"""
-train_model.py
-
-Train and save an XGBoost classifier and the LabelEncoder.
-This uses a synthetic dataset by default but accepts a DataFrame input
-if you want to train on real data.
-"""
-
+# model.py
+import os
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
+from ucimlrepo import fetch_ucirepo
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, classification_report
-import os
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_squared_error, r2_score
+from xgboost import XGBRegressor
 
-MODEL_PATH = "saved_model.pkl"
-ENCODER_PATH = "label_encoder.pkl"
+SAVED_MODEL_PATH = "saved_model.pkl"
+FEATURES_CACHE = "students_raw.csv"
 
-def generate_synthetic_data(n=500, random_state=42):
-    np.random.seed(random_state)
-    df = pd.DataFrame({
-        "StudyHours": np.random.randint(1, 13, n),               # 1-12 hours
-        "Attendance": np.random.randint(50, 101, n),            # 50-100%
-        "AssignmentsCompleted": np.random.randint(0, 11, n),    # 0-10
-        # skew distribution: more Medium/High to look plausible
-        "PerformanceLevel": np.random.choice(["High", "Medium", "Low"], n, p=[0.35, 0.45, 0.20])
-    })
-    return df
-
-def train_and_save(df=None, save_model_path=MODEL_PATH, save_encoder_path=ENCODER_PATH):
+def load_ucistudent_data(cache: bool = True) -> pd.DataFrame:
     """
-    Train model on df (if None, synthetic data is generated).
-    Saves model and encoder to disk.
-    Returns (model, label_encoder, train_report_str)
+    Fetch UCI Student Performance dataset (id=320) using ucimlrepo.
+    Returns DataFrame with features + G3 target.
+    If cache=True it will save a local CSV copy for speed.
+    """
+    try:
+        student = fetch_ucirepo(id=320)
+        X = student.data.features
+        y = student.data.targets["G3"]
+        df = pd.concat([X, y], axis=1)
+        if cache:
+            df.to_csv(FEATURES_CACHE, index=False)
+        return df
+    except Exception as e:
+        # try reading cached CSV if fetch fails
+        if os.path.exists(FEATURES_CACHE):
+            return pd.read_csv(FEATURES_CACHE)
+        raise RuntimeError(f"Failed to fetch dataset: {e}")
+
+def build_and_train(df: pd.DataFrame = None, save_path: str = SAVED_MODEL_PATH):
+    """
+    Build preprocessing + XGBoost pipeline and train on df.
+    Saves pipeline to disk (joblib).
+    Returns (pipeline, train_report_str)
     """
     if df is None:
-        df = generate_synthetic_data()
+        df = load_ucistudent_data()
 
-    # Basic validation
-    required = {"StudyHours", "Attendance", "AssignmentsCompleted", "PerformanceLevel"}
-    if not required.issubset(set(df.columns)):
-        raise ValueError(f"DataFrame must contain columns: {required}")
+    # Target
+    if "G3" not in df.columns:
+        raise ValueError("Dataset must contain 'G3' target column.")
 
-    # Encode target
-    le = LabelEncoder()
-    y = le.fit_transform(df["PerformanceLevel"])
+    # Basic cleaning: drop rows with missing target
+    df = df.dropna(subset=["G3"]).reset_index(drop=True)
 
-    X = df[["StudyHours", "Attendance", "AssignmentsCompleted"]]
+    # Features: use numeric columns and encode categorical
+    X = df.drop(columns=["G3"])
+    y = df["G3"].astype(float)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+    # Identify categorical columns
+    cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+
+    # Preprocessing
+    preprocessor = ColumnTransformer(
+        transformers=[
+           # ("cat", OneHotEncoder(handle_unknown="ignore", sparse=False), cat_cols),
+           ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_cols),
+
+        ],
+        remainder="passthrough"  # numeric passthrough
     )
 
-    # XGBoost multi-class classifier
-    num_classes = len(le.classes_)
-    model = XGBClassifier(
-        use_label_encoder=False,
-        objective="multi:softmax",
-        num_class=num_classes,
-        eval_metric="mlogloss",
-        n_estimators=150,
-        max_depth=5,
-        learning_rate=0.1,
-        random_state=42,
-        verbosity=0
+    # Pipeline with XGBoost regressor
+    model = Pipeline(
+        steps=[
+            ("pre", preprocessor),
+            ("xgb", XGBRegressor(n_estimators=200, max_depth=5, learning_rate=0.05, random_state=42, verbosity=0))
+        ]
     )
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     model.fit(X_train, y_train)
 
     y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=le.classes_, zero_division=0)
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
 
-    # Save artifacts
-    os.makedirs(os.path.dirname(save_model_path) or ".", exist_ok=True)
-    joblib.dump(model, save_model_path)
-    joblib.dump(le, save_encoder_path)
+    # Save model
+    joblib.dump(model, save_path)
 
-    summary = (
-        f"Model trained and saved.\nAccuracy on test set: {acc*100:.2f}%\n\n"
-        f"Label classes: {list(le.classes_)}\n\nClassification report:\n{report}"
+    report = (
+        f"Model trained and saved to {save_path}\n"
+        f"Test set MSE: {mse:.4f}\n"
+        f"Test set R2: {r2:.4f}\n"
+        f"Num train samples: {len(X_train)}, num test samples: {len(X_test)}"
     )
-    return model, le, summary
+    return model, report
+
+def load_model(path: str = SAVED_MODEL_PATH):
+    if not os.path.exists(path):
+        raise FileNotFoundError("Trained model not found. Please run build_and_train() or train via app.")
+    return joblib.load(path)
+
+def predict_g3_from_row(model_pipeline, row: pd.Series) -> float:
+    """
+    Accepts a pandas Series with feature columns (same columns as dataset except G3).
+    Returns predicted G3 as float.
+    """
+    X = pd.DataFrame([row])
+    pred = model_pipeline.predict(X)[0]
+    return float(pred)
 
 if __name__ == "__main__":
-    print("Training model on synthetic data...")
-    model, le, summary = train_and_save()
-    print(summary)
+    # CLI training entry
+    print("Loading dataset and training model...")
+    df = load_ucistudent_data()
+    model, rep = build_and_train(df)
+    print(rep)

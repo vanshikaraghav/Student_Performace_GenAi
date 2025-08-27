@@ -1,12 +1,28 @@
 # Python
 __pycache__/
 *.pyc
-.venv/
+*.pyo
+*.pyd
+.Python
 env/
 venv/
+.venv/
+ENV/
 
-# Streamlit cache
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
 .streamlit/
 
-# Environment variables
+# Environment
 .env
+
+# Model artifacts
+saved_model.pkl
+performance_log.csv
