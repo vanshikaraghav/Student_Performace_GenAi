@@ -42,7 +42,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["Predict & Log", "Chatbot", "Logs", "Reports"]
 # -------------------------
 with tab1:
     st.header("📊 Predict & Log Student Performance (G3)")
-    col1, col2 = st.columns(2)
+    col1, col2 ,col3= st.columns(3)
 
     # --- Manual Input ---
     with col1:
@@ -64,6 +64,8 @@ with tab1:
         guardian = st.selectbox("Guardian", ["mother","father","other"])
         traveltime = st.selectbox("Travel time", [1,2,3,4])
         studytime = st.selectbox("Study time", [1,2,3,4])
+    with col2:
+        st.subheader("")
         failures = st.number_input("Past failures", 0,3,0)
         schoolsup = st.selectbox("School support", ["yes","no"])
         famsup = st.selectbox("Family support", ["yes","no"])
@@ -82,7 +84,7 @@ with tab1:
         absences = st.number_input("Absences",0,93,4)
 
     # --- CSV upload ---
-    with col2:
+    with col3:
         st.subheader("CSV Upload (single row)")
         uploaded_row = st.file_uploader("Upload CSV with same columns", type=["csv"], key="row")
         df_row = pd.read_csv(uploaded_row) if uploaded_row else None
