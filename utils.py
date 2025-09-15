@@ -122,3 +122,4 @@ def generate_intervention_plan(student_profile: dict, predicted_g3: float) -> st
     )
     return ask_hf_system(prompt)
 
+

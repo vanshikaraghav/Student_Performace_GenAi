@@ -115,3 +115,5 @@ if __name__ == "__main__":
     df = load_ucistudent_data()
     model, rep = build_and_train(df)
     print(rep)
+
+
