@@ -6,7 +6,8 @@ xgboost
 joblib
 matplotlib
 fpdf
-openai
 python-dotenv
 ucimlrepo
 sdv
+transformers
+huggingface-hub
